@@ -4,7 +4,7 @@
 
 **A medical question-answering chatbot that answers only from documents you index.**
 
-Retrieval-Augmented Generation over a medical reference PDF — Flask, LangChain,
+Retrieval-Augmented Generation over a medical reference PDF — Flask, LangChain
 Pinecone, and a Groq-hosted LLaMA model.
 
 </div>
