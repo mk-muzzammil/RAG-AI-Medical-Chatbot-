@@ -1,8 +1,10 @@
 venv/
 data/
+docs/
 *.pdf
 .env
 __pycache__/
 *.pyc
 requirements-dev.txt
 store_index.py
+run_local.py

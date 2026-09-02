@@ -7,6 +7,10 @@
 Retrieval-Augmented Generation over a medical reference PDF — Flask, LangChain,
 Pinecone, and a Groq-hosted LLaMA model.
 
+<br>
+
+<img src="docs/screenshot.png" alt="MedCite chat interface — sidebar with starter questions, centered empty state explaining the retrieval pipeline, and the composer" width="100%">
+
 </div>
 
 ---
@@ -14,6 +18,7 @@ Pinecone, and a Groq-hosted LLaMA model.
 ## Table of contents
 
 - [What it does](#what-it-does)
+- [Interface](#interface)
 - [How it works](#how-it-works)
 - [Tech stack](#tech-stack)
 - [Project structure](#project-structure)
@@ -38,6 +43,23 @@ the language model as context.
 The model is instructed to answer from that context and to say it does not know
 when the context does not cover the question. Answers stay tethered to the
 source material instead of the model's general training.
+
+---
+
+## Interface
+
+The UI has no build step — vanilla CSS, inline SVG icons, jQuery from a CDN.
+Brand color `#DEA535`, typeface Roboto.
+
+| Region | What it holds |
+| --- | --- |
+| Header | Wordmark, indexed-document count, connection status |
+| Sidebar | New chat, an explanation of the grounding rule, starter questions, and the indexed source with its chunking parameters |
+| Empty state | The three retrieval steps a question actually goes through |
+| Composer | Auto-growing input — Enter sends, Shift + Enter adds a line — plus the medical disclaimer |
+
+The sidebar collapses from the hamburger and auto-hides below 860 px. Model
+output is inserted as a text node, never interpolated into HTML.
 
 ---
 
@@ -136,6 +158,9 @@ MedCite/
 │
 ├── .env                    # Secrets — never committed
 ├── .env.example            # Template
+│
+├── docs/
+│   └── screenshot.png      # README image
 │
 ├── data/
 │   └── Medical_book.pdf    # Source corpus (not deployed)
