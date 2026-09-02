@@ -25,7 +25,8 @@ deploy on Vercel.
 
 ```
 Medical-Chatbot-with-Langchain/
-├── app.py                  # Flask server + RAG chain (READ PATH) — Vercel entrypoint
+├── app.py                  # Flask app + RAG chain (READ PATH) — Vercel entrypoint
+├── run_local.py            # Dev server — the ONLY place app.run() lives
 ├── store_index.py          # One-off ingestion script (WRITE PATH) — local only
 ├── setup.py                # Package metadata (name: medcite)
 │
@@ -161,8 +162,19 @@ pip install -r requirements.txt -r requirements-dev.txt
 cp .env.example .env                               # then fill in keys
 
 python store_index.py          # one-time: build the Pinecone index
-python app.py                  # serves http://localhost:8080
+python run_local.py            # serves http://localhost:8080
 ```
+
+**Never put `app.run()` in `app.py`.** Vercel executes that file with
+`python app.py` during the build to discover the WSGI `app` object, so
+`__name__` is `"__main__"` there and any server started would hang the deploy
+until it times out. The dev server lives in `run_local.py` and nowhere else.
+
+**Nothing in `app.py` may touch the network at import time**, for the same
+reason: the build executes the module, so a module-level Pinecone or Groq call
+turns a bad key into a failed *build* rather than a failed request. The RAG
+chain is therefore built lazily in `get_chain()` on first request, guarded by a
+lock.
 
 `store_index.py` is **not idempotent** — re-running it upserts the same chunks
 again with new IDs, creating duplicates. Delete/recreate the index before

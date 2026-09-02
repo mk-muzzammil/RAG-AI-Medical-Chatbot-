@@ -139,16 +139,11 @@ def chat():
 
 
 # ----------------------------------------------------------
-# Local development server only.
+# NOTE: there is deliberately no `app.run()` in this file.
 #
-# Vercel executes this file with `python app.py` to discover the WSGI `app`
-# object, so __name__ IS "__main__" there. Without the VERCEL guard the dev
-# server starts during the build and never exits, hanging the deploy.
-# Vercel sets VERCEL=1 in both build and runtime environments.
+# Vercel executes this module with `python app.py` to discover the WSGI `app`
+# object, which means __name__ IS "__main__" during the build. Any server
+# started here would run forever and hang the deploy.
+#
+# To serve locally, run:  python run_local.py
 # ----------------------------------------------------------
-if __name__ == "__main__" and not os.environ.get("VERCEL"):
-    app.run(
-        host="127.0.0.1",
-        port=int(os.environ.get("PORT", 8080)),
-        debug=os.environ.get("FLASK_DEBUG", "1") == "1",
-    )

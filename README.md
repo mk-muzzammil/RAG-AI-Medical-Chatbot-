@@ -122,7 +122,8 @@ This is why dependencies are split across two requirements files.
 
 ```
 MedCite/
-├── app.py                  # Flask server + RAG chain — Vercel entrypoint
+├── app.py                  # Flask app + RAG chain — Vercel entrypoint, no app.run()
+├── run_local.py            # Development server (local only)
 ├── store_index.py          # One-off ingestion script (local only)
 ├── setup.py                # Package metadata
 │
@@ -224,8 +225,12 @@ embedding model downloads (~90 MB) before any work starts.
 ### 2. Start the server
 
 ```bash
-python app.py
+python run_local.py
 ```
+
+> `app.py` contains no `app.run()` call. Vercel executes it during the build to
+> find the WSGI `app` object, so a server started there would hang the deploy.
+> `run_local.py` is the development entrypoint; Vercel never uses it.
 
 | Route | Purpose |
 | --- | --- |
