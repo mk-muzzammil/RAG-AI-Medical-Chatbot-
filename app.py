@@ -103,18 +103,39 @@ def index():
 @app.route("/health")
 def health():
     """
-    Cheap config check - does not build the chain or call any API.
-    Use this first after a deploy.
+    Config check. By default this is cheap - it does not build the chain or
+    call any API. Use it first after a deploy.
+
+    /health?deep=1 additionally embeds a short test string, which exercises
+    the HuggingFace token and reports exactly what failed. Use it to diagnose
+    auth problems without going through the chat UI.
     """
     absent = missing_vars()
-    return {
+    body = {
         "status": "ok" if not absent else "misconfigured",
         "missing_env": absent,
         "index": INDEX_NAME,
         "model": GROQ_MODEL,
         "top_k": TOP_K,
         "chain_built": _chain is not None,
-    }, (200 if not absent else 503)
+    }
+
+    if request.args.get("deep") and not absent:
+        try:
+            from src.embeddings_api import HFInferenceEmbeddings
+
+            vector = HFInferenceEmbeddings().embed_query("health check")
+            body["embeddings"] = {"ok": True, "dimensions": len(vector)}
+            if len(vector) != 384:
+                body["status"] = "misconfigured"
+                body["embeddings"]["warning"] = (
+                    f"Expected 384 dimensions to match the Pinecone index, got {len(vector)}."
+                )
+        except Exception as exc:
+            body["status"] = "misconfigured"
+            body["embeddings"] = {"ok": False, "error": str(exc)}
+
+    return body, (200 if body["status"] == "ok" else 503)
 
 
 @app.route("/get", methods=["POST"])

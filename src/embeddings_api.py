@@ -74,8 +74,29 @@ class HFInferenceEmbeddings(Embeddings):
                 continue
 
             if response.status_code == 404:
+                # Endpoint moved or model not served here - try the next URL.
                 last_error = RuntimeError(f"404 from {url}")
                 continue
+
+            if response.status_code in (401, 403):
+                # Auth failure. Trying another URL cannot help, so stop here
+                # and say what actually needs fixing.
+                raise RuntimeError(
+                    f"HuggingFace rejected the token ({response.status_code}). Check that:\n"
+                    "  1. HUGGINGFACEHUB_API_TOKEN is set with the raw value - no "
+                    "surrounding quotes and no trailing spaces.\n"
+                    "  2. The token has inference access. A fine-grained token needs the "
+                    "'Make calls to Inference Providers' permission ticked; a classic "
+                    "'Read' token has it by default.\n"
+                    "  Create one at https://huggingface.co/settings/tokens"
+                )
+
+            if response.status_code == 402:
+                raise RuntimeError(
+                    "HuggingFace inference credits are exhausted for this account (402). "
+                    "Free accounts get a small monthly allowance; upgrade the account or "
+                    "switch to a different embedding provider."
+                )
 
             response.raise_for_status()
             data = response.json()
