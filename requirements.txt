@@ -1,0 +1,14 @@
+# ==========================================================
+# RUNTIME dependencies (what Vercel installs).
+# Deliberately excludes sentence-transformers / torch / pypdf:
+# those are ingestion-only and blow past the 250 MB function limit.
+# For local ingestion, also install requirements-dev.txt
+# ==========================================================
+flask==3.1.1
+python-dotenv==1.1.0
+requests==2.32.3
+langchain==0.3.26
+langchain-core==0.3.66
+langchain-community==0.3.26
+langchain-pinecone==0.2.8
+langchain-groq==0.3.2
