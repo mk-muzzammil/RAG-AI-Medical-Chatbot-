@@ -1,7 +1,7 @@
 from setuptools import find_packages, setup
 
 setup(
-    name="medical_chatbot",
+    name="medcite",
     version="1.0",
     author="Muzammil Hussain",
     author_email="",

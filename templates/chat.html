@@ -3,7 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>MediAssist — Medical Q&amp;A</title>
+    <title>MedCite — Grounded Medical Answers</title>
+    <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='favicon.svg') }}">
 
     <!-- Roboto -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -26,13 +27,16 @@
             </button>
 
             <div class="brand-mark">
-                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M12 3v18M3 12h18"/>
+                <!-- Document page + medical cross -->
+                <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M14 2.5H7a2 2 0 0 0-2 2v15a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7.5z"/>
+                    <path d="M14 2.5v5h5"/>
+                    <path d="M12 11.5v6M9 14.5h6"/>
                 </svg>
             </div>
 
             <div class="brand-text">
-                <h1 class="brand-title">MediAssist</h1>
+                <h1 class="brand-title">MedCite</h1>
                 <p class="brand-sub">Answers grounded in your medical reference</p>
             </div>
         </div>
