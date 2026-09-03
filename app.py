@@ -17,6 +17,12 @@ INDEX_NAME = os.environ.get("PINECONE_INDEX_NAME", "medical-chatbot")
 GROQ_MODEL = os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile")
 TOP_K = int(os.environ.get("RETRIEVER_TOP_K", "3"))
 LLM_TEMPERATURE = float(os.environ.get("LLM_TEMPERATURE", "0.4"))
+# Unset by default (backward compatible): retriever always returns TOP_K
+# chunks regardless of relevance. Set to a float (e.g. "0.5") to drop chunks
+# below that cosine-similarity score, so off-topic questions retrieve no
+# context at all. Tune against your own index — start low and raise it while
+# checking that real medical questions still retrieve their chunks.
+SCORE_THRESHOLD = os.environ.get("RETRIEVER_SCORE_THRESHOLD")
 
 REQUIRED_VARS = ("PINECONE_API_KEY", "GROQ_API_KEY", "HUGGINGFACEHUB_API_TOKEN")
 
@@ -60,9 +66,15 @@ def build_chain():
         index_name=INDEX_NAME,
         embedding=embeddings,
     )
-    retriever = docsearch.as_retriever(
-        search_type="similarity", search_kwargs={"k": TOP_K}
-    )
+    if SCORE_THRESHOLD:
+        retriever = docsearch.as_retriever(
+            search_type="similarity_score_threshold",
+            search_kwargs={"k": TOP_K, "score_threshold": float(SCORE_THRESHOLD)},
+        )
+    else:
+        retriever = docsearch.as_retriever(
+            search_type="similarity", search_kwargs={"k": TOP_K}
+        )
 
     # ==========================================
     # OpenAI Model Initialization (Commented out)
@@ -117,6 +129,7 @@ def health():
         "index": INDEX_NAME,
         "model": GROQ_MODEL,
         "top_k": TOP_K,
+        "score_threshold": float(SCORE_THRESHOLD) if SCORE_THRESHOLD else None,
         "chain_built": _chain is not None,
     }
 

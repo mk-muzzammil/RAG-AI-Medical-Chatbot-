@@ -134,6 +134,7 @@ recreating the index.
 | Chunk size / overlap | `src/helper.py` → `text_split()` |
 | Embedding model (⚠ also change index `dimension`) | `src/helper.py`, `src/embeddings_api.py`, `store_index.py` |
 | Number of retrieved chunks (k) | `RETRIEVER_TOP_K` env var (falls back to 3 in `app.py`) |
+| Off-topic/out-of-scope refusal | `src/prompt.py` (`system_prompt`) does the primary enforcement; `RETRIEVER_SCORE_THRESHOLD` env var optionally drops low-relevance chunks too |
 | LLM model / temperature | `GROQ_MODEL`, `LLM_TEMPERATURE` env vars (fallbacks in `app.py`) |
 | Index name | `PINECONE_INDEX_NAME` env var in `app.py`; still hard-coded in `store_index.py` |
 | Index cloud / region | `store_index.py` (`ServerlessSpec`) |
@@ -153,7 +154,7 @@ Required at runtime: `PINECONE_API_KEY`, `GROQ_API_KEY`, `HUGGINGFACEHUB_API_TOK
 `app.py` validates all three at import and raises a message naming the missing one.
 
 Optional overrides: `GROQ_MODEL`, `PINECONE_INDEX_NAME`, `RETRIEVER_TOP_K`,
-`LLM_TEMPERATURE`, `HF_EMBED_URL`, `FLASK_DEBUG`, `PORT`.
+`RETRIEVER_SCORE_THRESHOLD`, `LLM_TEMPERATURE`, `HF_EMBED_URL`, `FLASK_DEBUG`, `PORT`.
 
 ```bash
 python -m venv venv
