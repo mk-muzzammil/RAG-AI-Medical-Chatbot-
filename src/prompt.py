@@ -15,6 +15,10 @@ system_prompt = (
     "Context:\n"
     "{context}"
 )
+OFF_TOPIC_RESPONSE = (
+    "Please ask questions related to medical terms or health topics. "
+    "This assistant answers using a medical-book RAG knowledge base."
+)
 NO_INFORMATION_RESPONSE = (
     "There is no information in the retrieved medical-book knowledge base "
     "passages about this medical term or question."
