@@ -1,8 +1,9 @@
 from flask import Flask, render_template, request
 from dotenv import load_dotenv
-from src.prompt import *
+from src.prompt import system_prompt, GREETING_RESPONSE
 import os
 import threading
+import uuid
 
 
 app = Flask(__name__)
@@ -85,7 +86,8 @@ def build_chain():
     # ==========================================
     # Groq Model Initialization (Active)
     # ==========================================
-    chatModel = ChatGroq(model=GROQ_MODEL, temperature=LLM_TEMPERATURE)
+    chatModel = ChatGroq(model=GROQ_MODEL, temperature=LLM_TEMPERATURE,
+                         timeout=20, max_retries=0)
 
     prompt = ChatPromptTemplate.from_messages(
         [
@@ -146,7 +148,7 @@ def health():
                 )
         except Exception as exc:
             body["status"] = "misconfigured"
-            body["embeddings"] = {"ok": False, "error": str(exc)}
+            body["embeddings"] = {"ok": False, **service_error(exc)}
 
     return body, (200 if body["status"] == "ok" else 503)
 
@@ -156,20 +158,40 @@ def chat():
     msg = request.form.get("msg", "").strip()
     if not msg:
         return "Please enter a question.", 400
+    if msg.lower().strip("!?. ") in {"hi", "hy", "hello", "hey", "salam", "assalamualaikum"}:
+        return GREETING_RESPONSE
 
     try:
         chain = get_chain()
     except Exception as exc:
-        app.logger.exception("Chain initialization failed")
-        return f"Service not configured: {exc}", 503
+        return service_error(exc, "initialization"), 503
 
     try:
         response = chain.invoke({"input": msg})
     except Exception as exc:
-        app.logger.exception("RAG chain failed")
-        return f"Upstream error: {type(exc).__name__}: {exc}", 502
+        return service_error(exc), 502
 
     return str(response["answer"])
+
+
+def service_error(exc, stage="request"):
+    """Expose controlled errors without provider bodies or secrets."""
+    from src.embeddings_api import EmbeddingServiceError
+
+    reference = uuid.uuid4().hex[:12]
+    status = getattr(exc, "status_code", None)
+    provider = type(exc).__module__.split(".")[0]
+    message = "The medical knowledge service is temporarily unavailable. Please try again later."
+    if isinstance(exc, EmbeddingServiceError):
+        provider = "huggingface"
+        message = str(exc)
+    elif stage == "initialization":
+        message = "The medical knowledge service could not initialize. The administrator should check deployment configuration and Pinecone access."
+    elif provider == "groq":
+        message = "The answer-generation service is unavailable. The administrator should check Groq access, model configuration, and usage limits."
+    app.logger.error("Service failure reference=%s stage=%s provider=%s type=%s status=%s",
+                     reference, stage, provider, type(exc).__name__, status)
+    return {"error": message, "reference": reference}
 
 
 # ----------------------------------------------------------

@@ -13,6 +13,7 @@ model, because ingestion runs on your machine where size does not matter.
 """
 
 import os
+import math
 from typing import List
 
 import requests
@@ -24,8 +25,12 @@ DEFAULT_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 ROUTER_URL = (
     "https://router.huggingface.co/hf-inference/models/{model}/pipeline/feature-extraction"
 )
-# Legacy endpoint, tried automatically if the router returns 404.
-LEGACY_URL = "https://api-inference.huggingface.co/pipeline/feature-extraction/{model}"
+class EmbeddingServiceError(RuntimeError):
+    """Controlled, public-safe embedding failure."""
+
+    def __init__(self, message, status_code=None):
+        super().__init__(message)
+        self.status_code = status_code
 
 
 def _mean_pool(vec):
@@ -42,7 +47,7 @@ def _mean_pool(vec):
 class HFInferenceEmbeddings(Embeddings):
     """Minimal LangChain Embeddings implementation over the HuggingFace API."""
 
-    def __init__(self, api_key: str = None, model: str = None, timeout: int = 30):
+    def __init__(self, api_key: str = None, model: str = None, timeout: int = 15):
         self.api_key = api_key or os.environ.get("HUGGINGFACEHUB_API_TOKEN")
         if not self.api_key:
             raise ValueError(
@@ -56,7 +61,6 @@ class HFInferenceEmbeddings(Embeddings):
         override = os.environ.get("HF_EMBED_URL")
         self.urls = [override] if override else [
             ROUTER_URL.format(model=self.model),
-            LEGACY_URL.format(model=self.model),
         ]
 
         self.session = requests.Session()
@@ -64,48 +68,44 @@ class HFInferenceEmbeddings(Embeddings):
 
     def _post(self, inputs: List[str]) -> List[List[float]]:
         payload = {"inputs": inputs, "options": {"wait_for_model": True}}
-        last_error = None
+        try:
+            response = self.session.post(self.urls[0], json=payload, timeout=self.timeout)
+        except requests.RequestException:
+            raise EmbeddingServiceError(
+                "The medical-book embedding service could not be reached. Please try again later."
+            ) from None
 
-        for url in self.urls:
-            try:
-                response = self.session.post(url, json=payload, timeout=self.timeout)
-            except requests.RequestException as exc:
-                last_error = exc
-                continue
+        errors = {
+            401: "Hugging Face authentication failed. The administrator must update the inference token.",
+            403: "Hugging Face inference access was denied. The administrator must check token permissions.",
+            402: "Medical-book search is unavailable because Hugging Face inference credits are exhausted. The administrator must restore inference credits or configure a compatible embedding endpoint.",
+            404: "The embedding model endpoint is unavailable. The administrator must configure HF_EMBED_URL for the same embedding model.",
+            410: "The embedding endpoint has been retired. The administrator must configure HF_EMBED_URL for the same embedding model.",
+            429: "The medical-book embedding service is rate-limited. Please try again later.",
+        }
+        if not response.ok:
+            raise EmbeddingServiceError(
+                errors.get(response.status_code, "The medical-book embedding service is temporarily unavailable. Please try again later."),
+                response.status_code,
+            )
 
-            if response.status_code == 404:
-                # Endpoint moved or model not served here - try the next URL.
-                last_error = RuntimeError(f"404 from {url}")
-                continue
-
-            if response.status_code in (401, 403):
-                # Auth failure. Trying another URL cannot help, so stop here
-                # and say what actually needs fixing.
-                raise RuntimeError(
-                    f"HuggingFace rejected the token ({response.status_code}). Check that:\n"
-                    "  1. HUGGINGFACEHUB_API_TOKEN is set with the raw value - no "
-                    "surrounding quotes and no trailing spaces.\n"
-                    "  2. The token has inference access. A fine-grained token needs the "
-                    "'Make calls to Inference Providers' permission ticked; a classic "
-                    "'Read' token has it by default.\n"
-                    "  Create one at https://huggingface.co/settings/tokens"
-                )
-
-            if response.status_code == 402:
-                raise RuntimeError(
-                    "HuggingFace inference credits are exhausted for this account (402). "
-                    "Free accounts get a small monthly allowance; upgrade the account or "
-                    "switch to a different embedding provider."
-                )
-
-            response.raise_for_status()
+        try:
             data = response.json()
-            return [_mean_pool(item) for item in data]
-
-        raise RuntimeError(
-            f"HuggingFace embedding request failed for model '{self.model}'. "
-            f"Last error: {last_error}. Set HF_EMBED_URL to override the endpoint."
-        )
+            # Some endpoints omit the batch dimension for a single input.
+            if len(inputs) == 1 and isinstance(data, list) and data and isinstance(data[0], (float, int)):
+                data = [data]
+            if not isinstance(data, list) or len(data) != len(inputs):
+                raise ValueError("Unexpected batch shape")
+            vectors = [_mean_pool(item) for item in data]
+            if any(not isinstance(v, list) or len(v) != 384 or
+                   any(isinstance(x, bool) or not isinstance(x, (int, float)) or not math.isfinite(x) for x in v)
+                   for v in vectors):
+                raise ValueError("Expected finite 384-dimensional vectors")
+            return vectors
+        except (ValueError, TypeError, IndexError):
+            raise EmbeddingServiceError(
+                "The embedding service returned an invalid vector. The administrator must verify the endpoint serves all-MiniLM-L6-v2 with 384 dimensions."
+            ) from None
 
     def embed_documents(self, texts: List[str]) -> List[List[float]]:
         return self._post(list(texts))

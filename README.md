@@ -363,3 +363,36 @@ Documented deliberately — these are real, not oversights:
 <div align="center">
 <sub>MedCite · Informational only · Not a substitute for professional medical advice</sub>
 </div>
+
+### Troubleshooting chat requests
+
+The deployed request path is Hugging Face embeddings → Pinecone retrieval → Groq
+answer generation. A working Groq key alone does not make retrieval available.
+
+- `GET /health` checks configuration only; it does not prove any provider works.
+- `GET /health?deep=1` additionally checks Hugging Face embeddings and their
+  384-dimensional output. It does not check Pinecone or Groq.
+- Hugging Face HTTP 402 indicates a billing/credit problem. Restore inference
+  credits on the token's account, or set `HF_EMBED_URL` to a compatible endpoint
+  serving `sentence-transformers/all-MiniLM-L6-v2`. A fresh token for the same
+  account does not replenish credits.
+- Keep the same embedding model as ingestion. Merely using another model with
+  384 dimensions is insufficient; a different model requires rebuilding the
+  Pinecone index with that model.
+- Set required keys in the deployment's environment settings and redeploy after
+  updating them. A local `.env` is not the production environment.
+- Chat failures include a reference ID matching sanitized server logs. Provider
+  response bodies and credentials are not returned to the browser.
+
+The medical-only policy lives in `src/prompt.py`. Unsupported medical questions
+receive a fallback about the **retrieved passages**, rather than a claim that
+nothing exists in the entire book. Off-topic questions receive a medical-topic
+redirect. Greetings are handled without external APIs; other questions still
+require working retrieval. Prompt rules reduce unwanted answers but are not a
+hard security boundary.
+
+Run offline regression checks with:
+
+```bash
+python -m unittest discover -s tests -v
+```

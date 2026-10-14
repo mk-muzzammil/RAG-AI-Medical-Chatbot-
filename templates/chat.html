@@ -271,9 +271,13 @@
             }).done(function (data) {
                 $("#" + loadingId).remove();
                 appendMessage("bot", String(data));
-            }).fail(function () {
+            }).fail(function (xhr) {
                 $("#" + loadingId).remove();
-                appendMessage("bot", "Something went wrong reaching the model. Check the server log and try again.", "error");
+                const failure = xhr.responseJSON;
+                const message = failure && failure.error
+                    ? failure.error + (failure.reference ? " Reference: " + failure.reference : "")
+                    : "The medical knowledge service is temporarily unavailable. Please try again later.";
+                appendMessage("bot", message, "error");
             }).always(function () {
                 $("#send").prop("disabled", false);
                 $input.focus();
