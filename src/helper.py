@@ -1,6 +1,5 @@
 from langchain_community.document_loaders import PyPDFLoader, DirectoryLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain.embeddings import HuggingFaceEmbeddings
 from typing import List
 from langchain.schema import Document
 
@@ -20,7 +19,7 @@ def load_pdf_file(data):
 def filter_to_minimal_docs(docs: List[Document]) -> List[Document]:
     """
     Given a list of Document objects, return a new list of Document objects
-    containing only 'source' in metadata and the original page_content.
+    retaining source and page metadata and the original page_content.
     """
     minimal_docs: List[Document] = []
     for doc in docs:
@@ -28,7 +27,7 @@ def filter_to_minimal_docs(docs: List[Document]) -> List[Document]:
         minimal_docs.append(
             Document(
                 page_content=doc.page_content,
-                metadata={"source": src}
+                metadata={"source": src, "page": doc.metadata.get("page", 0)}
             )
         )
     return minimal_docs
@@ -36,8 +35,8 @@ def filter_to_minimal_docs(docs: List[Document]) -> List[Document]:
 
 
 #Split the Data into Text Chunks
-def text_split(extracted_data):
-    text_splitter=RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=20)
+def text_split(extracted_data, chunk_size=1000, chunk_overlap=150):
+    text_splitter=RecursiveCharacterTextSplitter(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
     text_chunks=text_splitter.split_documents(extracted_data)
     return text_chunks
 
@@ -45,5 +44,5 @@ def text_split(extracted_data):
 
 #Download the Embeddings from HuggingFace 
 def download_hugging_face_embeddings():
-    embeddings=HuggingFaceEmbeddings(model_name='sentence-transformers/all-MiniLM-L6-v2')  #this model return 384 dimensions
-    return embeddings
+    from src.embeddings import local_embeddings
+    return local_embeddings()

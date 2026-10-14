@@ -15,9 +15,10 @@ load_dotenv()
 # variable is visible on /health without paying for a chain build.
 # ----------------------------------------------------------
 INDEX_NAME = os.environ.get("PINECONE_INDEX_NAME", "medical-chatbot")
+NAMESPACE = os.environ.get("PINECONE_NAMESPACE", "")
 GROQ_MODEL = os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile")
 TOP_K = int(os.environ.get("RETRIEVER_TOP_K", "3"))
-LLM_TEMPERATURE = float(os.environ.get("LLM_TEMPERATURE", "0.4"))
+LLM_TEMPERATURE = float(os.environ.get("LLM_TEMPERATURE", "0"))
 # Unset by default (backward compatible): retriever always returns TOP_K
 # chunks regardless of relevance. Set to a float (e.g. "0.5") to drop chunks
 # below that cosine-similarity score, so off-topic questions retrieve no
@@ -29,7 +30,11 @@ REQUIRED_VARS = ("PINECONE_API_KEY", "GROQ_API_KEY", "HUGGINGFACEHUB_API_TOKEN")
 
 
 def missing_vars():
-    return [name for name in REQUIRED_VARS if not os.environ.get(name)]
+    provider = os.environ.get("EMBEDDING_PROVIDER", "huggingface").lower()
+    required = REQUIRED_VARS if provider == "huggingface" else REQUIRED_VARS[:2]
+    if provider == "pinecone":
+        required += ("PINECONE_NAMESPACE",)
+    return [name for name in required if not os.environ.get(name)]
 
 
 # ----------------------------------------------------------
@@ -50,7 +55,7 @@ def build_chain():
     from langchain.chains import create_retrieval_chain
     from langchain.chains.combine_documents import create_stuff_documents_chain
     from langchain_core.prompts import ChatPromptTemplate
-    from src.embeddings_api import HFInferenceEmbeddings
+    from src.embeddings import query_embeddings
 
     absent = missing_vars()
     if absent:
@@ -61,20 +66,27 @@ def build_chain():
             "Project Settings > Environment Variables (raw value, no quotes)."
         )
 
-    embeddings = HFInferenceEmbeddings()
+    embeddings = query_embeddings()
 
     docsearch = PineconeVectorStore.from_existing_index(
         index_name=INDEX_NAME,
         embedding=embeddings,
+        namespace=NAMESPACE,
     )
+    search_kwargs = {"k": TOP_K}
+    if os.environ.get("EMBEDDING_PROVIDER", "huggingface").lower() == "pinecone":
+        # Equal vector dimensions do not make embeddings from different models compatible.
+        from src.embeddings_pinecone import MODEL
+        search_kwargs["filter"] = {"embedding_model": MODEL}
     if SCORE_THRESHOLD:
+        search_kwargs["score_threshold"] = float(SCORE_THRESHOLD)
         retriever = docsearch.as_retriever(
             search_type="similarity_score_threshold",
-            search_kwargs={"k": TOP_K, "score_threshold": float(SCORE_THRESHOLD)},
+            search_kwargs=search_kwargs,
         )
     else:
         retriever = docsearch.as_retriever(
-            search_type="similarity", search_kwargs={"k": TOP_K}
+            search_type="similarity", search_kwargs=search_kwargs
         )
 
     # ==========================================
@@ -120,15 +132,16 @@ def health():
     Config check. By default this is cheap - it does not build the chain or
     call any API. Use it first after a deploy.
 
-    /health?deep=1 additionally embeds a short test string, which exercises
-    the HuggingFace token and reports exactly what failed. Use it to diagnose
-    auth problems without going through the chat UI.
+    /health?deep=1 additionally embeds a short test string with the configured
+    provider. This checks embeddings only, not Pinecone or Groq.
     """
     absent = missing_vars()
     body = {
         "status": "ok" if not absent else "misconfigured",
         "missing_env": absent,
         "index": INDEX_NAME,
+        "namespace": NAMESPACE,
+        "embedding_provider": os.environ.get("EMBEDDING_PROVIDER", "huggingface"),
         "model": GROQ_MODEL,
         "top_k": TOP_K,
         "score_threshold": float(SCORE_THRESHOLD) if SCORE_THRESHOLD else None,
@@ -137,9 +150,9 @@ def health():
 
     if request.args.get("deep") and not absent:
         try:
-            from src.embeddings_api import HFInferenceEmbeddings
+            from src.embeddings import query_embeddings
 
-            vector = HFInferenceEmbeddings().embed_query("health check")
+            vector = query_embeddings().embed_query("health check")
             body["embeddings"] = {"ok": True, "dimensions": len(vector)}
             if len(vector) != 384:
                 body["status"] = "misconfigured"
@@ -158,6 +171,8 @@ def chat():
     msg = request.form.get("msg", "").strip()
     if not msg:
         return "Please enter a question.", 400
+    if len(msg) > 2000:
+        return {"error": "Please keep your question under 2,000 characters."}, 413
     if msg.lower().strip("!?. ") in {"hi", "hy", "hello", "hey", "salam", "assalamualaikum"}:
         return GREETING_RESPONSE
 
@@ -177,12 +192,16 @@ def chat():
 def service_error(exc, stage="request"):
     """Expose controlled errors without provider bodies or secrets."""
     from src.embeddings_api import EmbeddingServiceError
+    from src.embeddings_pinecone import PineconeEmbeddingError
 
     reference = uuid.uuid4().hex[:12]
     status = getattr(exc, "status_code", None)
     provider = type(exc).__module__.split(".")[0]
     message = "The medical knowledge service is temporarily unavailable. Please try again later."
-    if isinstance(exc, EmbeddingServiceError):
+    if isinstance(exc, PineconeEmbeddingError):
+        provider = "pinecone"
+        message = str(exc)
+    elif isinstance(exc, EmbeddingServiceError):
         provider = "huggingface"
         message = str(exc)
     elif stage == "initialization":

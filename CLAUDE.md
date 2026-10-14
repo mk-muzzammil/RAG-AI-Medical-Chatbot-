@@ -2,6 +2,32 @@
 
 Guidance for Claude Code (and any AI agent) working in this repository.
 
+## Current architecture update (October 14, 2026)
+
+These details supersede the older pipeline and known-issue descriptions below:
+
+- The recommended deployed provider is `EMBEDDING_PROVIDER=pinecone`.
+  `src/embeddings_pinecone.py` calls Pinecone Inference `llama-text-embed-v2`
+  with 384 dimensions, passage mode for ingestion and query mode for retrieval.
+  Only Pinecone and Groq keys are required in this mode; no Hugging Face call occurs.
+- `python store_index.py --provider pinecone` reads the selected PDF once, chunks
+  it at 1000 characters with 150 overlap, and stores text plus source/page/model
+  metadata. It generates a namespace from the PDF, model, and chunking settings.
+  Stable IDs and fetch-before-embed make reruns resumable without duplicate vectors
+  or repeated embedding tokens for completed chunks. Existing data is never deleted.
+- Both app and ingestion read `PINECONE_INDEX_NAME`. Set `PINECONE_NAMESPACE` to
+  the completed job's printed namespace. The supplied book's Pinecone-model
+  namespace is `medical-book-9f31dd66ccb58b3a`; MiniLM's older namespace is
+  `medical-book-bf692cedeb367000`. Never mix models, even at equal dimensions.
+- `src/embeddings.py` selects Pinecone, legacy hosted Hugging Face, or local
+  MiniLM embeddings. Local mode is rejected on Vercel. Runtime dependencies
+  still exclude torch and PDF parsing; no network runs at module import.
+- The user's budget is the free Starter plan. Do not upgrade plans, purchase
+  credits, or silently use another paid provider. Handle quota exhaustion explicitly.
+- Regression tests: `python -m unittest discover -s tests -v`.
+- `.cache/` holds model downloads and an ingestion report; it is excluded from
+  Git and Vercel. `.env` contains secrets and must never be printed or committed.
+
 ---
 
 ## 1. What this project is

@@ -1,4 +1,7 @@
 venv/
+.venv/
+.cache/
+tests/
 data/
 docs/
 *.pdf

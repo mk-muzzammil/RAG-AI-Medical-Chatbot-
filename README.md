@@ -66,24 +66,24 @@ output is inserted as a text node, never interpolated into HTML.
 ## How it works
 
 The project has two independent pipelines that share one contract: **the
-embedding dimension and the index name must match on both sides.**
+embedding model, dimension, index, and namespace must match on both sides.**
 
 ### Ingestion — `store_index.py` (run once, locally)
 
 ```
-data/*.pdf
-   │  load_pdf_file()            DirectoryLoader + PyPDFLoader
+data/Medical_book.pdf
+   │  prepare_book()             pypdf page-by-page extraction
    ▼
 Document[]
-   │  filter_to_minimal_docs()   keep only metadata={"source": ...}
+   │                            retain source, page, model, book hash
    ▼
 Document[]  (minimal)
    │  text_split()               RecursiveCharacterTextSplitter
-   │                             chunk_size=500, chunk_overlap=20
+   │                             chunk_size=1000, chunk_overlap=150
    ▼
 chunks
-   │  download_hugging_face_embeddings()
-   │                             all-MiniLM-L6-v2, local → 384 dims
+   │  PineconeEmbeddings.embed_documents()
+   │                             llama-text-embed-v2, passage → 384 dims
    ▼
 Pinecone index "medical-chatbot"
    dimension=384 · metric=cosine · serverless aws/us-east-1
@@ -101,27 +101,27 @@ rag_chain = create_retrieval_chain(retriever, question_answer_chain)
    │
    ├─ retriever   PineconeVectorStore.from_existing_index(...)
    │              .as_retriever(search_type="similarity", k=3)
-   │              embeddings: HFInferenceEmbeddings (HTTP, 384 dims)
+   │              embeddings: PineconeEmbeddings (query mode, 384 dims)
    │              → 3 chunks injected as {context}
    │
    └─ question_answer_chain = create_stuff_documents_chain(chatModel, prompt)
           prompt     ChatPromptTemplate [ system_prompt(+{context}), human {input} ]
-          chatModel  ChatGroq(GROQ_MODEL, temperature=0.4)
+          chatModel  ChatGroq(GROQ_MODEL, temperature=0)
    ▼
 response["answer"]  →  plain string  →  rendered in the chat UI
 ```
 
-### Why two different embedding paths
+### Matching document and query embeddings
 
-Both paths use the **same model and the same 384 dimensions**, but reach it
-differently:
+With `EMBEDDING_PROVIDER=pinecone`, both paths use the **same model and the same
+384 dimensions** on Pinecone:
 
 | Path | Where | How embeddings are computed | Why |
 | --- | --- | --- | --- |
-| Ingestion | Your machine | `sentence-transformers` locally | Fast, free, runs offline over thousands of chunks |
-| Query | Flask / Vercel | HuggingFace Inference API over HTTP | `torch` is ~2 GB; a Vercel function is capped at 250 MB |
+| Ingestion | Your machine | Pinecone Inference, passage mode | Embed the book once and retain chunk text |
+| Query | Flask / Vercel | Pinecone Inference, query mode | Embed only the question; no local ML model |
 
-This is why dependencies are split across two requirements files.
+PDF parsing and optional local MiniLM embeddings remain ingestion-only dependencies.
 
 ---
 
@@ -133,7 +133,7 @@ This is why dependencies are split across two requirements files.
 | Web framework | Flask 3.1 |
 | Orchestration | LangChain 0.3 (`create_retrieval_chain`, `create_stuff_documents_chain`) |
 | Vector store | Pinecone (serverless, aws/us-east-1) |
-| Embeddings | `sentence-transformers/all-MiniLM-L6-v2` — 384 dims |
+| Embeddings | Pinecone `llama-text-embed-v2` — 384 dims (legacy MiniLM optional) |
 | LLM | Groq-hosted LLaMA (configurable via `GROQ_MODEL`) |
 | Frontend | Vanilla CSS + jQuery, Roboto, brand `#DEA535` |
 | Hosting | Vercel (Python runtime, WSGI) |
@@ -187,7 +187,7 @@ MedCite/
 - Python 3.12
 - A Pinecone account
 - A Groq account
-- A HuggingFace account (free read token)
+- No Hugging Face account is required for Pinecone embeddings
 - One or more medical PDFs in `data/`
 
 ### Install
@@ -220,11 +220,13 @@ cp .env.example .env
 | --- | --- | --- | --- |
 | `PINECONE_API_KEY` | Yes | ingestion + runtime | [app.pinecone.io](https://app.pinecone.io) → API Keys |
 | `GROQ_API_KEY` | Yes | runtime | [console.groq.com/keys](https://console.groq.com/keys) |
-| `HUGGINGFACEHUB_API_TOKEN` | Yes | runtime | [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens) — type **Read** |
+| `EMBEDDING_PROVIDER` | Set to `pinecone` | runtime | Selects Pinecone Inference; legacy default is `huggingface` |
+| `PINECONE_NAMESPACE` | Yes for Pinecone embeddings | runtime | Printed by the indexing script |
+| `HUGGINGFACEHUB_API_TOKEN` | Only for legacy `huggingface` mode | runtime | Hugging Face token with inference access |
 | `GROQ_MODEL` | No | runtime | Defaults to `llama-3.3-70b-versatile` |
 | `PINECONE_INDEX_NAME` | No | runtime | Defaults to `medical-chatbot` |
 | `RETRIEVER_TOP_K` | No | runtime | Defaults to `3` |
-| `LLM_TEMPERATURE` | No | runtime | Defaults to `0.4` |
+| `LLM_TEMPERATURE` | No | runtime | Defaults to `0` |
 | `HF_EMBED_URL` | No | runtime | Override if HuggingFace moves its endpoint |
 
 `.env` is git-ignored. Never commit it.
@@ -236,12 +238,12 @@ cp .env.example .env
 ### 1. Build the index — once
 
 ```bash
-python store_index.py
+python store_index.py --provider pinecone
 ```
 
-Parses the PDFs, chunks them, embeds every chunk locally, creates the Pinecone
-index if missing, and upserts. Takes several minutes on first run — the
-embedding model downloads (~90 MB) before any work starts.
+Parses the PDF, chunks it, embeds the chunks through Pinecone Inference, creates
+the index if missing, and uploads vectors plus source text to an isolated namespace.
+Copy the printed namespace into `.env`. Reruns skip chunks already indexed.
 
 > **This script is not idempotent.** Running it twice upserts the same chunks
 > again under new IDs, producing duplicates. Delete and recreate the index
@@ -280,12 +282,14 @@ Vercel detects Flask automatically from `app.py` exporting a top-level `app`.
    ```
    PINECONE_API_KEY
    GROQ_API_KEY
-   HUGGINGFACEHUB_API_TOKEN
+   EMBEDDING_PROVIDER=pinecone
+   PINECONE_INDEX_NAME=medical-chatbot
+   PINECONE_NAMESPACE=medical-book-9f31dd66ccb58b3a
    GROQ_MODEL
    ```
 
-4. **Deploy**, then hit `/health` first. JSON back means the environment loaded
-   correctly; a 500 means a variable is missing.
+4. **Deploy**, then hit `/health` first. HTTP 200 confirms configuration exists;
+   HTTP 503 reports missing configuration. `/health?deep=1` additionally tests embeddings.
 
 ### What makes the deployment fit
 
@@ -339,7 +343,8 @@ Documented deliberately — these are real, not oversights:
    `response["context"]` but are not surfaced in the response or the UI.
 3. **Answers are returned as a raw string,** not JSON. The frontend inserts them
    as text nodes, so model output is never parsed as markup.
-4. **`store_index.py` is not idempotent** — re-running duplicates chunks.
+4. **Old namespaces are retained.** Changing the PDF or model creates a separate
+   namespace; cleanup is deliberate, never automatic.
 5. **`data/Medical_book.pdf` is 16 MB and committed to git,** which makes a
    fresh clone heavy.
 6. **This is not clinical advice.** MedCite is a demo over one reference book.
@@ -366,11 +371,13 @@ Documented deliberately — these are real, not oversights:
 
 ### Troubleshooting chat requests
 
-The deployed request path is Hugging Face embeddings → Pinecone retrieval → Groq
-answer generation. A working Groq key alone does not make retrieval available.
+With `EMBEDDING_PROVIDER=pinecone`, the deployed request path is Pinecone embeddings
+→ Pinecone retrieval → Groq answer generation. Only the question is embedded per
+request; the PDF is read during ingestion, not during chat. Retrieved chunk text
+stored in Pinecone supplies the evidence for Groq's answer.
 
 - `GET /health` checks configuration only; it does not prove any provider works.
-- `GET /health?deep=1` additionally checks Hugging Face embeddings and their
+- `GET /health?deep=1` additionally checks the selected embedding provider and its
   384-dimensional output. It does not check Pinecone or Groq.
 - Hugging Face HTTP 402 indicates a billing/credit problem. Restore inference
   credits on the token's account, or set `HF_EMBED_URL` to a compatible endpoint
@@ -396,3 +403,90 @@ Run offline regression checks with:
 ```bash
 python -m unittest discover -s tests -v
 ```
+
+### Pinecone embeddings on Vercel (recommended)
+
+Pinecone can generate embeddings as well as store and search them. This app uses
+Pinecone Inference's `llama-text-embed-v2` at 384 dimensions for both documents and
+questions. It uses `passage` mode for book chunks and `query` mode for questions.
+There is no Hugging Face inference call or local torch dependency in this mode.
+
+As checked on October 14, 2026, Pinecone's Starter plan includes 5 million tokens
+per month for this model. Database, Groq, and Vercel have separate usage limits;
+this is a quota-limited setup, not unlimited free hosting. Keep the account on
+Starter. The app does not upgrade plans, buy credits, or fall back to paid models.
+See [Pinecone pricing](https://www.pinecone.io/pricing/) for current allowances.
+
+Re-embed the book once with:
+
+```bash
+python store_index.py --provider pinecone --pdf data/Medical_book.pdf
+```
+
+The job skips already stored chunk IDs on reruns to avoid spending embedding tokens
+twice, paces requests, and stops on provider errors. If a rate limit interrupts it,
+wait and rerun the same command. For an exhausted monthly quota, wait for its reset.
+
+Set these in Vercel's **Production** environment alongside `PINECONE_API_KEY` and
+`GROQ_API_KEY`, then deploy the updated code:
+
+```dotenv
+EMBEDDING_PROVIDER=pinecone
+PINECONE_INDEX_NAME=medical-chatbot
+PINECONE_NAMESPACE=medical-book-9f31dd66ccb58b3a
+GROQ_MODEL=openai/gpt-oss-20b
+```
+
+That namespace belongs to the supplied PDF embedded by Pinecone. Use the printed
+namespace if your PDF or chunking changes. Do not point Pinecone embeddings at the
+older MiniLM namespace, even though both models produce 384 numbers. Retrieval
+also filters by model metadata to prevent mixing incompatible vectors.
+
+After deployment, `/health?deep=1` should show `embedding_provider: pinecone`, the
+new namespace, and 384 dimensions. Then ask a medical question to test retrieval
+and Groq as well. Never run ingestion inside the Vercel request or build process.
+
+### Alternative: index with local MiniLM embeddings
+
+Ingestion runs on your computer, using local CPU embeddings. It does not consume
+Hugging Face inference credits. Install both requirements files, then run:
+
+```bash
+python store_index.py --pdf data/Medical_book.pdf --dry-run
+python store_index.py --pdf data/Medical_book.pdf
+```
+
+The script extracts text page by page, creates 1,000-character chunks with
+150-character overlap, and embeds them with `sentence-transformers/all-MiniLM-L6-v2`
+(384 dimensions). It stores text, source filename, and one-based PDF page numbers
+in Pinecone. The model downloads once to `.cache/models/`.
+
+Each PDF/chunking version gets its own namespace. Deterministic vector IDs make
+rerunning the same job safe without adding duplicates. Old namespaces are retained;
+the script does not delete existing data. Wait for the final verified vector count
+before using the new namespace. The report is saved to `.cache/index-report.json`.
+
+For the supplied `Medical_book.pdf`, select this namespace in the app environment:
+
+```dotenv
+PINECONE_INDEX_NAME=medical-chatbot
+PINECONE_NAMESPACE=medical-book-bf692cedeb367000
+```
+
+Use the namespace printed by the script if the PDF or chunking settings change.
+
+For local development without hosted embedding fees, also set:
+
+```dotenv
+EMBEDDING_PROVIDER=local
+```
+
+Then restart the app with `python run_local.py`. Local mode still uses Pinecone
+for retrieval and Groq for answers, so both of those keys remain required.
+
+For the legacy MiniLM path on Vercel, set `EMBEDDING_PROVIDER=huggingface` and the same `PINECONE_NAMESPACE`,
+along with the three provider keys, then redeploy. The current Vercel build excludes
+the large local torch dependencies. Hosted Hugging Face embeddings need available
+inference credits or a compatible `HF_EMBED_URL`; indexing the PDF does not resolve
+HTTP 402 when the app embeds a new question. Running local embeddings in production
+requires a host with enough space and memory for the model and torch dependencies.
